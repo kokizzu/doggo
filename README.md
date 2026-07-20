@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/mr-karan/doggo/main/install.sh | sh
 
 - Arch Linux: `pacman -S doggo`
 - Eget: `eget mr-karan/doggo`
-- Getnoo: `emerge net-dns/doggo`
+- Gentoo: `emerge net-dns/doggo`
 - Homebrew: `brew install doggo`
 - MacPorts (macOS): `port install doggo`
 - [Mise](https://github.com/jdx/mise): `mise use -g doggo@latest`
