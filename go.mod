@@ -1,13 +1,13 @@
 module github.com/mr-karan/doggo
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/ameshkov/dnsstamps v1.0.3
 	github.com/fatih/color v1.19.0
 	github.com/go-chi/chi/v5 v5.3.1
-	github.com/jsdelivr/globalping-go v0.1.0
+	github.com/jsdelivr/globalping-go v0.2.0
 	github.com/knadh/koanf/parsers/toml v0.1.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1

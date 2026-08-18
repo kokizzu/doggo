@@ -83,7 +83,7 @@ func (app *App) GlobalpingMeasurement() (*globalping.Measurement, error) {
 		return nil, err
 	}
 
-	if measurement.Status != globalping.StatusFinished {
+	if measurement.Status != globalping.MeasurementStatusFinished {
 		return nil, fmt.Errorf("globalping measurement did not complete successfully (status: %s)", measurement.Status)
 	}
 	return measurement, nil
@@ -200,16 +200,16 @@ func (app *App) OutputGlobalpingJSON(m *globalping.Measurement) error {
 	return nil
 }
 
-func parseGlobalpingLocations(from string) []globalping.Locations {
+func parseGlobalpingLocations(from string) globalping.LocationOptions {
 	if from == "" {
-		return []globalping.Locations{
+		return globalping.LocationOptions{
 			{
 				Magic: "world",
 			},
 		}
 	}
 	fromArr := strings.Split(from, ",")
-	locations := make([]globalping.Locations, len(fromArr))
+	locations := make(globalping.LocationOptions, len(fromArr))
 	for i, v := range fromArr {
 		locations[i] = globalping.Locations{
 			Magic: strings.TrimSpace(v),

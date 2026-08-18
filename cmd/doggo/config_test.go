@@ -30,7 +30,7 @@ func (c *recordingGlobalpingClient) CreateMeasurement(_ context.Context, request
 }
 
 func (c *recordingGlobalpingClient) AwaitMeasurement(_ context.Context, _ string) (*globalping.Measurement, error) {
-	return &globalping.Measurement{Status: globalping.StatusFinished}, nil
+	return &globalping.Measurement{Status: globalping.MeasurementStatusFinished}, nil
 }
 
 // isolateConfigEnv points all config file search paths at empty temp dirs and
