@@ -81,9 +81,10 @@
 # interception — only use it against a server you control.
 # skip-hostname-verification = false
 
-# Bind outgoing queries to a local source address (an IP, optionally with a
-# port), like dig -b. Useful for choosing the egress interface on a multi-homed
-# host. Not supported for DNSCrypt resolvers.
+# Bind outgoing queries to a local source IP address, like dig -b. Useful
+# for choosing the egress interface on a multi-homed host. A fixed source
+# port is not supported (doggo queries concurrently, and concurrent sockets
+# cannot share one local port). Not supported for DNSCrypt resolvers.
 # source = "192.0.2.1"
 
 # --- Output ------------------------------------------------------------------

@@ -3,6 +3,7 @@ package resolvers
 import (
 	"context"
 	"crypto/tls"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -53,7 +54,7 @@ func NewClassicResolver(server string, classicOpts ClassicResolverOpts, resolver
 	client.Net = net
 
 	if resolverOpts.SourceAddr != "" {
-		dialer, err := sourceDialer(net, resolverOpts.SourceAddr)
+		dialer, err := sourceDialer(net, resolverOpts.SourceAddr, resolverOpts.Timeout)
 		if err != nil {
 			return nil, err
 		}
@@ -74,6 +75,11 @@ func (r *ClassicResolver) query(ctx context.Context, question dns.Question, flag
 		rsp      Response
 		messages = prepareMessages(question, flags, r.resolverOptions.Ndots, r.resolverOptions.SearchList)
 	)
+	// Several questions run concurrently against this resolver and all of
+	// them share r.client, so work on a per-call copy: the truncated
+	// response retry below changes the protocol (and the source dialer)
+	// and must not be observed by, or race with, other questions.
+	client := *r.client
 	for _, msg := range messages {
 		r.resolverOptions.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
@@ -85,7 +91,7 @@ func (r *ClassicResolver) query(ctx context.Context, question dns.Question, flag
 		// it's better to not rely on `rtt` provided here and calculate it ourselves.
 		now := time.Now()
 
-		in, _, err := r.client.ExchangeContext(ctx, &msg, r.server)
+		in, _, err := client.ExchangeContext(ctx, &msg, r.server)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				return rsp, err
@@ -95,29 +101,32 @@ func (r *ClassicResolver) query(ctx context.Context, question dns.Question, flag
 
 		// In case the response size exceeds 512 bytes (can happen with lot of TXT records),
 		// fallback to TCP as with UDP the response is truncated. Fallback mechanism is in-line with `dig`.
-		if in.Truncated {
-			switch r.client.Net {
+		if in.Truncated && strings.HasPrefix(client.Net, "udp") {
+			// Retry the same message on a copy of the client switched to TCP.
+			// The source-address dialer is typed to the original (UDP) network,
+			// so rebuild it or the local address type would no longer match the
+			// dialed network.
+			retry := client
+			switch retry.Net {
 			case "udp":
-				r.client.Net = "tcp"
+				retry.Net = "tcp"
 			case "udp4":
-				r.client.Net = "tcp4"
+				retry.Net = "tcp4"
 			case "udp6":
-				r.client.Net = "tcp6"
-			default:
-				r.client.Net = "tcp"
+				retry.Net = "tcp6"
 			}
-			// The source-address dialer is typed to the original (UDP)
-			// network, so rebuild it for the TCP retry or the local address
-			// type would no longer match the dialed network.
-			if r.client.Dialer != nil {
-				dialer, err := sourceDialer(r.client.Net, r.resolverOptions.SourceAddr)
+			if retry.Dialer != nil {
+				dialer, err := sourceDialer(retry.Net, r.resolverOptions.SourceAddr, r.resolverOptions.Timeout)
 				if err != nil {
 					return rsp, err
 				}
-				r.client.Dialer = dialer
+				retry.Dialer = dialer
 			}
-			r.resolverOptions.Logger.Debug("Response truncated; retrying now", "protocol", r.client.Net)
-			return r.query(ctx, question, flags)
+			r.resolverOptions.Logger.Debug("Response truncated; retrying now", "protocol", retry.Net)
+			in, _, err = retry.ExchangeContext(ctx, &msg, r.server)
+			if err != nil {
+				return rsp, err
+			}
 		}
 
 		// Pack questions in output.

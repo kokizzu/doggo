@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -53,34 +54,40 @@ func NewDOHResolver(server string, resolverOpts Options) (Resolver, error) {
 	if resolverOpts.UseHTTP3 {
 		h3Transport := &http3.Transport{TLSClientConfig: tlsConfig}
 		if resolverOpts.SourceAddr != "" {
-			laddr, err := sourceUDPAddr(resolverOpts.SourceAddr)
+			network, laddr, err := sourceUDPAddr(resolverOpts.SourceAddr)
 			if err != nil {
 				return nil, err
 			}
-			h3Transport.Dial = func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
-				remote, err := net.ResolveUDPAddr("udp", addr)
-				if err != nil {
-					return nil, err
-				}
-				conn, err := net.ListenUDP("udp", laddr)
-				if err != nil {
-					return nil, err
-				}
-				session, err := quic.DialEarly(ctx, conn, remote, tlsCfg, cfg)
-				if err != nil {
-					conn.Close()
-					return nil, err
-				}
-				return session, nil
+			// One source-bound UDP socket and QUIC transport shared by every
+			// connection this resolver opens. Neither the HTTP/3 transport nor
+			// quic-go closes a caller-owned socket, so closeTransport closes
+			// them explicitly.
+			conn, err := net.ListenUDP(network, laddr)
+			if err != nil {
+				return nil, err
 			}
+			udpTransport := &quic.Transport{Conn: conn}
+			h3Transport.Dial = func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+				remote, err := resolveUDPAddrCompat(network, addr)
+				if err != nil {
+					return nil, err
+				}
+				return udpTransport.DialEarly(ctx, remote, tlsCfg, cfg)
+			}
+			closeTransport = func() error {
+				return errors.Join(h3Transport.Close(), udpTransport.Close(), conn.Close())
+			}
+		} else {
+			closeTransport = h3Transport.Close
 		}
 		transport = h3Transport
-		closeTransport = h3Transport.Close
 	} else {
 		httpsTransport := http.DefaultTransport.(*http.Transport).Clone()
 		httpsTransport.TLSClientConfig = tlsConfig
 		if resolverOpts.SourceAddr != "" {
-			dialer, err := sourceDialer("tcp", resolverOpts.SourceAddr)
+			// Match the DefaultTransport dialer being replaced: a 30s dial
+			// timeout and 30s TCP keepalive, plus the source local address.
+			dialer, err := sourceDialer("tcp", resolverOpts.SourceAddr, 30*time.Second)
 			if err != nil {
 				return nil, err
 			}

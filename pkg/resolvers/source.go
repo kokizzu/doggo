@@ -3,40 +3,85 @@ package resolvers
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// parseSourceAddr parses a --source value into a local IP and port. The value
-// may be a bare IP ("192.0.2.1", "2001:db8::1") or an IP with a port
-// ("192.0.2.1:5300", "[2001:db8::1]:5300"). A missing or zero port lets the OS
-// pick an ephemeral source port. An empty string is not an error and yields a
-// nil IP, signalling that no source binding was requested.
-func parseSourceAddr(source string) (net.IP, int, error) {
+// parseSourceAddr parses a --source value into a local IP. The value may be
+// a bare IP ("192.0.2.1", "2001:db8::1", "fe80::1%en0"), a bracketed IPv6
+// literal without a port ("[2001:db8::1]"), or an IP with a port
+// ("192.0.2.1:5300", "[2001:db8::1]:5300"). Only port 0 (or an omitted port)
+// is accepted: doggo issues several queries concurrently and concurrent
+// sockets cannot share one fixed local port. An empty string is not an error
+// and yields a zero address, signalling that no source binding was requested.
+func parseSourceAddr(source string) (netip.Addr, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
-		return nil, 0, nil
+		return netip.Addr{}, nil
 	}
 
-	host, portStr := source, ""
+	var (
+		host, portStr = source, ""
+		hasPort       bool
+	)
 	if h, p, err := net.SplitHostPort(source); err == nil {
-		host, portStr = h, p
+		host, portStr, hasPort = h, p, true
+	} else if strings.HasPrefix(source, "[") && strings.HasSuffix(source, "]") {
+		// Bracketed IPv6 literal without a port.
+		host = source[1 : len(source)-1]
 	}
 
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil, 0, fmt.Errorf("invalid source address %q: not an IP address", source)
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid source address %q: not an IP address", source)
 	}
 
-	port := 0
-	if portStr != "" {
-		p, err := strconv.Atoi(portStr)
-		if err != nil || p < 0 || p > 65535 {
-			return nil, 0, fmt.Errorf("invalid source port in %q: must be between 0 and 65535", source)
+	if hasPort {
+		if portStr == "" {
+			return netip.Addr{}, fmt.Errorf("invalid source address %q: missing port number", source)
 		}
-		port = p
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 0 || port > 65535 {
+			return netip.Addr{}, fmt.Errorf("invalid source port in %q: must be between 0 and 65535", source)
+		}
+		if port != 0 {
+			return netip.Addr{}, fmt.Errorf("invalid source address %q: a fixed source port is not supported because doggo issues queries concurrently (use a bare IP and let the OS pick a source port)", source)
+		}
 	}
-	return ip, port, nil
+	return addr, nil
+}
+
+// sourceUDPAddr parses the source address and returns the UDP network
+// matching its family ("udp4" or "udp6") along with the local UDP address.
+// A nil address is returned when no source address is configured.
+func sourceUDPAddr(source string) (network string, laddr *net.UDPAddr, err error) {
+	addr, err := parseSourceAddr(source)
+	if err != nil || !addr.IsValid() {
+		return "", nil, err
+	}
+	return udpNetwork(addr), &net.UDPAddr{IP: net.IP(addr.AsSlice()), Zone: addr.Zone()}, nil
+}
+
+// udpNetwork returns the UDP network matching the address family, so that
+// remote addresses are resolved and sockets are bound with a consistent
+// family (an IPv6 source must not dial an IPv4 remote).
+func udpNetwork(addr netip.Addr) string {
+	if addr.Is4() || addr.Is4In6() {
+		return "udp4"
+	}
+	return "udp6"
+}
+
+// resolveUDPAddrCompat resolves addr restricted to network's address family,
+// failing with a clear error when the server has no address of that family.
+func resolveUDPAddrCompat(network, addr string) (*net.UDPAddr, error) {
+	remote, err := net.ResolveUDPAddr(network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s over %s to match the source address family: %w", addr, network, err)
+	}
+	return remote, nil
 }
 
 // sourceLocalAddr builds a net.Addr of the concrete type the given network
@@ -44,33 +89,38 @@ func parseSourceAddr(source string) (net.IP, int, error) {
 // otherwise) so it can be assigned to net.Dialer.LocalAddr. It returns a nil
 // address when source is empty.
 func sourceLocalAddr(network, source string) (net.Addr, error) {
-	ip, port, err := parseSourceAddr(source)
-	if err != nil || ip == nil {
+	addr, err := parseSourceAddr(source)
+	if err != nil || !addr.IsValid() {
 		return nil, err
 	}
+	ip := net.IP(addr.AsSlice())
 	if strings.HasPrefix(network, "tcp") {
-		return &net.TCPAddr{IP: ip, Port: port}, nil
+		return &net.TCPAddr{IP: ip, Zone: addr.Zone()}, nil
 	}
-	return &net.UDPAddr{IP: ip, Port: port}, nil
+	return &net.UDPAddr{IP: ip, Zone: addr.Zone()}, nil
 }
 
-// sourceDialer returns a *net.Dialer bound to the configured source address for
-// the given network, or a nil dialer when no source address is configured.
-func sourceDialer(network, source string) (*net.Dialer, error) {
+// sourceDialer returns a *net.Dialer bound to the configured source address
+// for the given network, or a nil dialer when no source address is
+// configured. An explicit dial timeout (and TCP keepalive) is set because
+// callers that install a dialer on a dns.Client or http.Transport otherwise
+// lose the default dial timeout.
+func sourceDialer(network, source string, timeout time.Duration) (*net.Dialer, error) {
 	la, err := sourceLocalAddr(network, source)
 	if err != nil || la == nil {
 		return nil, err
 	}
-	return &net.Dialer{LocalAddr: la}, nil
+	return &net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+		LocalAddr: la,
+	}, nil
 }
 
-// sourceUDPAddr returns a *net.UDPAddr for binding a UDP PacketConn (used by
-// the QUIC-based DoQ and HTTP/3 DoH transports), or nil when no source address
-// is configured.
-func sourceUDPAddr(source string) (*net.UDPAddr, error) {
-	ip, port, err := parseSourceAddr(source)
-	if err != nil || ip == nil {
-		return nil, err
-	}
-	return &net.UDPAddr{IP: ip, Port: port}, nil
+// NewSourceDialer returns a net.Dialer bound to the given source address for
+// the given network, for callers outside this package (such as the
+// --authoritative bootstrap lookups). A nil dialer is returned when no
+// source address is configured.
+func NewSourceDialer(network, source string, timeout time.Duration) (*net.Dialer, error) {
+	return sourceDialer(network, source, timeout)
 }

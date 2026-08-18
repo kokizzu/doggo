@@ -192,3 +192,29 @@ func assertNameservers(t *testing.T, got, want []models.Nameserver) {
 		}
 	}
 }
+
+func TestInitNameserverClassifiesPort853AsDoT(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantType string
+	}{
+		{"9.9.9.9:853", models.DOTResolver},
+		{"[2001:db8::1]:853", models.DOTResolver},
+		{"9.9.9.9:53", models.UDPResolver},
+		{"9.9.9.9", models.UDPResolver},
+		{"2001:db8::1", models.UDPResolver},
+		{"tls://9.9.9.9", models.DOTResolver},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			ns, err := initNameserver(tc.input)
+			if err != nil {
+				t.Fatalf("initNameserver(%q): %v", tc.input, err)
+			}
+			if ns.Type != tc.wantType {
+				t.Fatalf("initNameserver(%q) type = %v, want %v", tc.input, ns.Type, tc.wantType)
+			}
+		})
+	}
+}

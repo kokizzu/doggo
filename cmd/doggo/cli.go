@@ -64,6 +64,11 @@ func main() {
 	}
 
 	if app.QueryFlags.GPFrom != "" {
+		// A local source bind cannot affect a probe executed by Globalping.
+		if app.QueryFlags.SourceAddr != "" {
+			logger.Error("--source cannot be combined with --gp-from: a local bind cannot affect a remote Globalping probe")
+			os.Exit(exitGenericFailure)
+		}
 		res, err := app.GlobalpingMeasurement()
 		if err != nil {
 			logger.Error("Error fetching globalping measurement", "error", err)
@@ -224,7 +229,7 @@ func setupFlags() *flag.FlagSet {
 	f.String("strategy", "all", "Strategy to query nameservers (all, random, first, internal)")
 	f.String("tls-hostname", "", "Hostname for certificate verification")
 	f.Bool("skip-hostname-verification", false, "Skip TLS Hostname Verification")
-	f.StringP("source", "b", "", "Bind queries to a local source address (IP or IP:port), like dig -b")
+	f.StringP("source", "b", "", "Bind queries to a local source IP address, like dig -b. A fixed source port is not supported (queries run concurrently)")
 
 	f.Bool("any", false, "Query all supported DNS record types")
 	f.BoolP("authoritative", "A", false, "Automatically query the authoritative nameserver for the domain")

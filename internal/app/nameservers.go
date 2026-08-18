@@ -14,6 +14,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/mr-karan/doggo/pkg/config"
 	"github.com/mr-karan/doggo/pkg/models"
+	"github.com/mr-karan/doggo/pkg/resolvers"
 )
 
 // ErrSystemNameservers identifies failures to load the host's resolver
@@ -194,7 +195,14 @@ func initNameserver(n string) (models.Nameserver, error) {
 		n = wrapIPv6(n)
 		// URL-encode zone identifiers (%) for proper parsing
 		n = encodeZoneID(n)
-		n = "udp://" + n
+		// A bare host:853 (no scheme) means DNS over TLS on the conventional
+		// DoT port; classifying it as UDP would send plain UDP to port 853
+		// and time out.
+		if _, port, err := net.SplitHostPort(n); err == nil && port == models.DefaultTLSPort {
+			n = "tls://" + n
+		} else {
+			n = "udp://" + n
+		}
 	} else {
 		// Protocol is present, but we still need to wrap IPv6 addresses in the host part
 		n = wrapIPv6InURL(n)
@@ -507,6 +515,15 @@ func (app *App) loadAuthoritativeNameserver(domain string) error {
 	resolver := net.JoinHostPort(systemServers[0], models.DefaultUDPPort)
 
 	c := &dns.Client{Timeout: 5 * time.Second}
+	// Bind the bootstrap queries to the configured source address, like the
+	// resolver queries themselves.
+	if app.QueryFlags.SourceAddr != "" {
+		dialer, err := resolvers.NewSourceDialer("udp", app.QueryFlags.SourceAddr, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		c.Dialer = dialer
+	}
 
 	// Step 1: use SOA to identify the closest enclosing zone (the zone cut).
 	zone, err := app.closestZone(c, resolver, dns.Fqdn(domain))

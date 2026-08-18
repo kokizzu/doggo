@@ -78,15 +78,15 @@ func (r *DOQResolver) query(ctx context.Context, question dns.Question, flags Qu
 
 	var session *quic.Conn
 	if r.resolverOptions.SourceAddr != "" {
-		laddr, err := sourceUDPAddr(r.resolverOptions.SourceAddr)
+		network, laddr, err := sourceUDPAddr(r.resolverOptions.SourceAddr)
 		if err != nil {
 			return rsp, err
 		}
-		remote, err := net.ResolveUDPAddr("udp", r.server)
+		remote, err := resolveUDPAddrCompat(network, r.server)
 		if err != nil {
 			return rsp, err
 		}
-		conn, err := net.ListenUDP("udp", laddr)
+		conn, err := net.ListenUDP(network, laddr)
 		if err != nil {
 			return rsp, err
 		}
