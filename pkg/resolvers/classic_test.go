@@ -3,11 +3,65 @@ package resolvers
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 )
+
+// TestClassicResolverOversizedUDPResponse ensures the classic UDP client's
+// receive buffer is large enough for responses bigger than 512 bytes even
+// when the query carries no EDNS0 OPT record advertising a buffer. Without
+// a sized buffer the datagram is either OS-truncated and fails to unpack
+// (Unix) or fails outright with WSAEMSGSIZE (Windows). See issue #251.
+func TestClassicResolverOversizedUDPResponse(t *testing.T) {
+	var sawOpt bool
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		sawOpt = r.IsEdns0() != nil
+		m := new(dns.Msg)
+		m.SetReply(r)
+		// Pad the response well past 512 bytes while leaving TC clear.
+		for i := 0; i < 4; i++ {
+			m.Answer = append(m.Answer, &dns.TXT{
+				Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60},
+				Txt: []string{strings.Repeat("x", 200)},
+			})
+		}
+		if packed, err := m.Pack(); err != nil || len(packed) <= 512 {
+			t.Errorf("test server response must exceed 512 bytes, got %d (err %v)", len(packed), err)
+		}
+		_ = w.WriteMsg(m)
+	})
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usrv := &dns.Server{PacketConn: pc, Handler: handler}
+	go func() { _ = usrv.ActivateAndServe() }()
+	defer usrv.Shutdown()
+
+	rslvr, err := NewClassicResolver(pc.LocalAddr().String(), ClassicResolverOpts{}, Options{
+		Timeout: 2 * time.Second,
+		Logger:  discardLogger(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsp, err := rslvr.Lookup(context.Background(), []dns.Question{
+		{Name: "oversized.test.", Qtype: dns.TypeTXT, Qclass: dns.ClassINET},
+	}, QueryFlags{})
+	if err != nil {
+		t.Fatalf("lookup against oversized UDP response failed: %v", err)
+	}
+	if sawOpt {
+		t.Error("plain query must not gain an EDNS0 OPT record from the receive-buffer fix")
+	}
+	if len(rsp) == 0 || len(rsp[0].Answers) != 4 {
+		t.Fatalf("expected all 4 answers from the oversized response, got %+v", rsp)
+	}
+}
 
 // TestClassicResolverTruncatedRetryWithSource exercises the truncated-UDP to
 // TCP fallback together with a bound source address: the retry must switch

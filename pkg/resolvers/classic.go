@@ -29,6 +29,12 @@ func NewClassicResolver(server string, classicOpts ClassicResolverOpts, resolver
 	client := &dns.Client{
 		Timeout: resolverOpts.Timeout,
 		Net:     "udp",
+		// Size the local UDP receive buffer independently of EDNS0: without
+		// this, replies larger than 512 bytes to plain (non-EDNS) queries are
+		// OS-truncated and fail to unpack on Unix, and fail with WSAEMSGSIZE
+		// on Windows (issue #251). This only sizes the receive buffer; it adds
+		// no OPT record and changes nothing on the wire.
+		UDPSize: dns.DefaultMsgSize,
 	}
 
 	if classicOpts.UseTCP {
