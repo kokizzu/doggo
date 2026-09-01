@@ -59,7 +59,7 @@ func main() {
 		os.Exit(exitGenericFailure)
 	}
 
-	if len(app.QueryFlags.QNames) == 0 {
+	if len(app.QueryFlags.QNames) == 0 && !cfg.trace {
 		cfg.flagSet.Usage()
 		return
 	}
@@ -188,6 +188,9 @@ func runTrace(a *app.App, cfg *config, logger *slog.Logger) int {
 	}
 	if err != nil {
 		logger.Error("Trace failed", "error", err)
+		if errors.Is(err, resolvers.ErrInvalidTraceConfig) {
+			return exitGenericFailure
+		}
 		if len(result.Hops) > 0 {
 			return exitPartialFailure
 		}
@@ -229,6 +232,9 @@ func validateTraceQuery(qf models.QueryFlags) error {
 	}
 	if len(qf.QTypes) != 1 {
 		return fmt.Errorf("--trace requires exactly one query type, got %d", len(qf.QTypes))
+	}
+	if strings.EqualFold(qf.QTypes[0], "ANY") {
+		return errors.New("--trace does not support query type ANY")
 	}
 	if len(qf.QClasses) != 1 {
 		return fmt.Errorf("--trace requires exactly one query class, got %d", len(qf.QClasses))

@@ -767,6 +767,7 @@ func TestValidateTraceQuery(t *testing.T) {
 		{"multiple names", func(qf *models.QueryFlags) { qf.QNames = append(qf.QNames, "other.example") }, "exactly one query name"},
 		{"no names", func(qf *models.QueryFlags) { qf.QNames = nil }, "exactly one query name"},
 		{"multiple types", func(qf *models.QueryFlags) { qf.QTypes = append(qf.QTypes, "AAAA") }, "exactly one query type"},
+		{"explicit ANY type", func(qf *models.QueryFlags) { qf.QTypes = []string{"ANY"} }, "query type ANY"},
 		{"multiple classes", func(qf *models.QueryFlags) { qf.QClasses = append(qf.QClasses, "CH") }, "exactly one query class"},
 		{"non-IN class", func(qf *models.QueryFlags) { qf.QClasses = []string{"CH"} }, "class IN"},
 	}

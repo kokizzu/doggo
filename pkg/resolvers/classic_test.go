@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,9 +17,9 @@ import (
 // a sized buffer the datagram is either OS-truncated and fails to unpack
 // (Unix) or fails outright with WSAEMSGSIZE (Windows). See issue #251.
 func TestClassicResolverOversizedUDPResponse(t *testing.T) {
-	var sawOpt bool
+	var sawOpt atomic.Bool
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
-		sawOpt = r.IsEdns0() != nil
+		sawOpt.Store(r.IsEdns0() != nil)
 		m := new(dns.Msg)
 		m.SetReply(r)
 		// Pad the response well past 512 bytes while leaving TC clear.
@@ -55,7 +56,7 @@ func TestClassicResolverOversizedUDPResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup against oversized UDP response failed: %v", err)
 	}
-	if sawOpt {
+	if sawOpt.Load() {
 		t.Error("plain query must not gain an EDNS0 OPT record from the receive-buffer fix")
 	}
 	if len(rsp) == 0 || len(rsp[0].Answers) != 4 {

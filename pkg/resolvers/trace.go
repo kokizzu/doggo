@@ -24,6 +24,10 @@ const (
 	defaultTraceWait  = 5 * time.Second
 )
 
+// ErrInvalidTraceConfig identifies trace questions and options that are
+// rejected before any DNS exchange.
+var ErrInvalidTraceConfig = errors.New("invalid trace configuration")
+
 type TraceStatus string
 
 type TraceVerdict string
@@ -203,7 +207,7 @@ func newTracer(question dns.Question, opts TraceOptions) (*tracer, error) {
 		return nil, err
 	}
 	if opts.UseIPv4 && opts.UseIPv6 {
-		return nil, fmt.Errorf("trace supports at most one address-family filter")
+		return nil, fmt.Errorf("%w: trace supports at most one address-family filter", ErrInvalidTraceConfig)
 	}
 
 	timeout := opts.Timeout
@@ -213,15 +217,15 @@ func newTracer(question dns.Question, opts TraceOptions) (*tracer, error) {
 
 	source, err := parseSourceAddr(opts.SourceAddr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidTraceConfig, err)
 	}
 	if source.IsValid() {
 		source = source.Unmap()
 		if opts.UseIPv4 && !source.Is4() {
-			return nil, fmt.Errorf("source address family does not match IPv4 trace filter")
+			return nil, fmt.Errorf("%w: source address family does not match IPv4 trace filter", ErrInvalidTraceConfig)
 		}
 		if opts.UseIPv6 && !source.Is6() {
-			return nil, fmt.Errorf("source address family does not match IPv6 trace filter")
+			return nil, fmt.Errorf("%w: source address family does not match IPv6 trace filter", ErrInvalidTraceConfig)
 		}
 	}
 
@@ -271,10 +275,13 @@ func normalizeTraceQuestion(q dns.Question) (dns.Question, error) {
 		q.Qclass = dns.ClassINET
 	}
 	if q.Qclass != dns.ClassINET {
-		return dns.Question{}, fmt.Errorf("trace supports only class IN")
+		return dns.Question{}, fmt.Errorf("%w: trace supports only class IN", ErrInvalidTraceConfig)
 	}
 	if q.Qtype == 0 {
 		q.Qtype = dns.TypeA
+	}
+	if q.Qtype == dns.TypeANY {
+		return dns.Question{}, fmt.Errorf("%w: trace does not support query type ANY", ErrInvalidTraceConfig)
 	}
 	q.Name = canonicalName(q.Name)
 	return q, nil
@@ -1077,6 +1084,9 @@ func transportTraceError(err error) *TraceError {
 func asTraceError(err error, fallback string) *TraceError {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, ErrInvalidTraceConfig) {
+		return traceErr("invalid_config", err.Error())
 	}
 	var terr *TraceError
 	if errors.As(err, &terr) {

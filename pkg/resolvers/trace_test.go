@@ -135,6 +135,50 @@ func runTrace(t *testing.T, q dns.Question, opts TraceOptions) (TraceResult, err
 	res, err := Trace(context.Background(), q, opts)
 	return res, err
 }
+func TestTraceRejectsInvalidConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		q    dns.Question
+		opts TraceOptions
+		want string
+	}{
+		{
+			name: "ANY question",
+			q:    dns.Question{Name: "example.com.", Qtype: dns.TypeANY, Qclass: dns.ClassINET},
+			want: "query type ANY",
+		},
+		{
+			name: "invalid source",
+			q:    dns.Question{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET},
+			opts: TraceOptions{SourceAddr: "not-an-ip"},
+			want: "invalid source address",
+		},
+		{
+			name: "source family mismatch",
+			q:    dns.Question{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET},
+			opts: TraceOptions{UseIPv4: true, SourceAddr: "::1"},
+			want: "does not match IPv4",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := runTrace(t, tc.q, tc.opts)
+			if !errors.Is(err, ErrInvalidTraceConfig) {
+				t.Fatalf("Trace() error = %v, want ErrInvalidTraceConfig", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Trace() error = %q, want it to mention %q", err, tc.want)
+			}
+			if res.Status != TraceStatusFailed || res.Error == nil || res.Error.Code != "invalid_config" {
+				t.Fatalf("result = %+v, want failed invalid_config", res)
+			}
+			if len(res.Hops) != 0 {
+				t.Fatalf("len(Hops) = %d, want 0", len(res.Hops))
+			}
+		})
+	}
+}
 
 func TestTraceHierarchyAndAuthoritySemantics(t *testing.T) {
 	h := installTraceExchange(t, func(call traceCall) (*dns.Msg, time.Duration, error) {

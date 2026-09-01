@@ -985,6 +985,7 @@ func TestTraceRejectsIncompatibleInvocations(t *testing.T) {
 		want     string
 	}{
 		{name: "any", args: []string{"--trace", "--any", "example.test"}, want: "--any"},
+		{name: "explicit ANY type", args: []string{"--trace", "ANY", "example.test"}, want: "query type ANY"},
 		{name: "authoritative", args: []string{"--trace", "--authoritative", "example.test"}, want: "--authoritative"},
 		{name: "globalping", args: []string{"--trace", "--gp-from", "Germany", "example.test"}, want: "--gp-from"},
 		{name: "both address families", args: []string{"--trace", "-4", "-6", "example.test"}, want: "--ipv4"},
@@ -993,6 +994,9 @@ func TestTraceRejectsIncompatibleInvocations(t *testing.T) {
 		{name: "multiple types", args: []string{"--trace", "A", "AAAA", "example.test"}, want: "exactly one query type"},
 		{name: "multiple names", args: []string{"--trace", "a.example.test", "b.example.test"}, want: "exactly one query name"},
 		{name: "multiple classes", args: []string{"--trace", "-c", "IN", "-c", "CH", "example.test"}, want: "exactly one query class"},
+		{name: "missing question", args: []string{"--trace"}, want: "exactly one query name"},
+		{name: "invalid source", args: []string{"--trace", "--source", "not-an-ip", "example.test"}, want: "invalid source address"},
+		{name: "source family mismatch", args: []string{"--trace", "-4", "--source", "::1", "example.test"}, want: "does not match IPv4"},
 		// DOGGO_TRACE=true enables trace mode, so the --any conflict must
 		// surface even without a --trace flag on the command line.
 		{name: "trace from env", extraEnv: []string{"DOGGO_TRACE=true"}, args: []string{"--any", "example.test"}, want: "--any"},
