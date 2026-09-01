@@ -14,10 +14,12 @@ doggo --reverse 8.8.8.8 --trace
 doggo example.com --trace @1.1.1.1
 doggo example.com --trace --json
 doggo example.com --trace --short
+doggo example.com --trace --source 192.0.2.10 --ipv4
 ```
 
 - `--trace` is a mode flag, not a subcommand.
 - Trace mode accepts exactly one effective question and defaults to `A IN`.
+- The explicit `ANY` query type is unsupported. This is separate from the `--any` fan-out flag, which is also rejected.
 - `--reverse` rewrites the query to PTR form first, then traces that lookup.
 - Only class `IN` is supported.
 
@@ -30,7 +32,8 @@ doggo example.com --trace --short
 - After priming, every hop is sent directly to authoritative servers over classic DNS on port 53.
 - Hop queries always use `RD=0`.
 - Authoritative hops try UDP first and retry truncated responses over TCP.
-- `--ipv4`, `--ipv6`, `--source`, `--timeout`, DNS header flags, EDNS flags, output flags, and `--debug` still apply.
+- `--ipv4`, `--ipv6`, `--timeout`, DNS header flags, EDNS flags, output flags, and `--debug` still apply.
+- `-b`/`--source` binds direct authoritative queries to a local IP address. The value must be an IP literal; omit the port or use port `0` so the OS can select one. Its address family must match `--ipv4` or `--ipv6` when either filter is selected.
 - Encrypted resolver settings only affect an explicit bootstrap resolver.
 - ECS is never forwarded to authoritative servers.
 
@@ -78,25 +81,27 @@ Each hop includes `number`, `zone`, `role`, `outcome`, `attempts`, optional `del
 
 Each attempt includes `nameserver`, `ip`, `protocol`, `rtt_ms`, `rcode`, an optional `truncated` marker, and an optional structured `error` with `code` and `detail`.
 
-Stable outcomes are `referral`, `answer`, `cname`, `nxdomain`, `nodata`, and `error`. Stable error codes include `bootstrap`, `timeout`, `network`, `refused`, `servfail`, `malformed_referral`, `lame_delegation`, `no_nameserver_address`, `referral_loop`, `cname_loop`, `max_hops`, and `query_budget`.
+Stable outcomes are `referral`, `answer`, `cname`, `nxdomain`, `nodata`, and `error`. Stable error codes include `invalid_config`, `bootstrap`, `timeout`, `network`, `refused`, `servfail`, `malformed_referral`, `lame_delegation`, `no_nameserver_address`, `referral_loop`, `cname_loop`, `max_hops`, and `query_budget`.
 
 ## Incompatible flags
 
 `--trace` cannot be combined with:
 
 - `--any`
+- the explicit `ANY` query type
 - `--authoritative`
 - `--gp-from`
 - multiple effective questions
 - non-`IN` classes
 - both `--ipv4` and `--ipv6`
+- a `--source` address whose family conflicts with `--ipv4` or `--ipv6`
 
 ## Partial results and exit codes
 
 Doggo prints collected hops before exiting on operational failures.
 
 - `0`: completed trace, including authoritative `NXDOMAIN` and `NODATA`
-- `1`: invalid invocation or configuration
+- `1`: invalid invocation or configuration, including an invalid `--source` address or source/filter family mismatch
 - `2`: one or more hops were collected, but the trace ended with an operational error
 - `9`: no usable trace hop was produced
 

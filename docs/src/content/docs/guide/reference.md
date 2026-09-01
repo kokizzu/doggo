@@ -18,7 +18,8 @@ request is sent; the lookup API reports the same validation failures as HTTP
 400 responses.
 
 `--trace` switches Doggo into iterative delegation-trace mode. In trace mode,
-Doggo accepts exactly one effective question and defaults to `A IN`.
+Doggo accepts exactly one effective question, defaults to `A IN`, and rejects
+the explicit `ANY` query type.
 
 ## Query Options
 
@@ -41,9 +42,16 @@ Doggo accepts exactly one effective question and defaults to `A IN`.
 | `--timeout=DURATION`           | Specify timeout for the resolver to return a response (e.g., 5s, 400ms, 1m) |
 | `-4, --ipv4`                   | Use IPv4 only                                                               |
 | `-6, --ipv6`                   | Use IPv6 only                                                               |
+| `-b, --source=IP`              | Bind queries to a local source IP address                                   |
 | `--http3`                      | Use HTTP/3 for HTTPS (DoH) nameservers                                      |
 | `--tls-hostname=HOSTNAME`      | Provide a hostname for TLS certificate verification                         |
 | `--skip-hostname-verification` | Skip TLS Hostname Verification for DoT lookups                              |
+
+`--source` accepts an IPv4 or IPv6 literal, including a scoped IPv6 address.
+Bracketed IPv6 is accepted. Omit the port or use port `0`; fixed non-zero
+source ports are unsupported because queries can run concurrently. The address
+family must match `--ipv4` or `--ipv6` when either filter is selected.
+DNSCrypt does not support source binding.
 
 ## Query Flags
 
@@ -114,7 +122,8 @@ doggo example.com --trace --short
 ### Trace semantics
 
 - `--trace` is a mode flag, not a subcommand.
-- The default trace question is `A IN`.
+- Trace mode accepts exactly one effective question and defaults to `A IN`.
+- The explicit `ANY` query type is unsupported.
 - `--reverse` converts the query to PTR form before tracing.
 - `@server` or `--nameserver` affects only root priming.
 - Without an explicit resolver, Doggo starts from built-in IANA root hints.
@@ -122,7 +131,8 @@ doggo example.com --trace --short
 - If priming fails, the trace ends with a bootstrap error.
 - Later hops are sent directly to authoritative servers over classic DNS with `RD=0`.
 - Authoritative hops try UDP first and retry truncated responses over TCP.
-- `--ipv4`, `--ipv6`, `--source`, `--timeout`, DNS header flags, EDNS flags, output flags, and `--debug` still apply.
+- `--ipv4`, `--ipv6`, `--timeout`, DNS header flags, EDNS flags, output flags, and `--debug` still apply.
+- `-b`/`--source` binds direct authoritative queries to a local IP address and must match the selected address-family filter.
 - Encrypted resolver settings only apply to an explicit bootstrap resolver.
 - `--do` may expose DNSSEC records in the trace, but Doggo does **not** validate the chain of trust.
 
@@ -138,12 +148,20 @@ The top level contains `schema_version` and `trace`. The nested `trace` object c
 
 ### Trace incompatibilities and exits
 
-`--trace` rejects `--any`, `--authoritative`, `--gp-from`, multiple effective questions, non-`IN` classes, and using both `--ipv4` and `--ipv6` together.
+`--trace` rejects:
+
+- `--any` and the explicit `ANY` query type
+- `--authoritative`
+- `--gp-from`
+- zero or multiple effective questions
+- non-`IN` classes
+- using both `--ipv4` and `--ipv6`
+- a `--source` address whose family conflicts with `--ipv4` or `--ipv6`
 
 Exit codes:
 
 - `0`: completed trace, including authoritative `NXDOMAIN` and `NODATA`
-- `1`: invalid invocation or configuration
+- `1`: invalid invocation or configuration, including malformed or family-mismatched `--source` values
 - `2`: partial trace; Doggo still prints collected hops first
 - `9`: no usable trace hop was produced
 
