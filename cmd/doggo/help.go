@@ -122,6 +122,7 @@ func renderCustomHelp() {
 		"Examples": []Example{
 			{"mrkaran.dev", "Query a domain using defaults."},
 			{"mrkaran.dev CNAME", "Query for a CNAME record."},
+			{"example.com --trace", "Trace the delegation path from the root servers."},
 			{"mrkaran.dev MX @9.9.9.9", "Uses a custom DNS resolver."},
 			{"-q mrkaran.dev -t MX -n 1.1.1.1", "Using named arguments."},
 			{"mrkaran.dev --aa --ad", "Query with Authoritative Answer and Authenticated Data flags set."},
@@ -152,6 +153,7 @@ func renderCustomHelp() {
 			{"-x, --reverse", "Performs a DNS Lookup for an IPv4 or IPv6 address. Sets the query type and class to PTR and IN respectively."},
 			{"--any", "Query all supported DNS record types (A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, CAA)."},
 			{"-A, --authoritative", "Find the domain's zone via SOA and query its delegated authoritative nameservers (the NS RRset). Honours --strategy to narrow the set."},
+			{"--trace", "Trace the delegation path from the root servers to the authoritative answer. Asks exactly one question (default A/IN); an explicit nameserver only primes the root zone."},
 		},
 		"ResolverOptions": []Option{
 			{"--strategy=STRATEGY", "Specify strategy to query nameservers. Options: all, random, first, internal (RFC 1918/ULA private IPs only)."},

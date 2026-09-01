@@ -71,5 +71,5 @@
 
 - [ ] Add tests for Resolvers.
 - [ ] Add tests for CLI Output.
-- [ ] Add support for `dig +trace` like functionality.
+- [x] Add support for `dig +trace` like functionality.
 - [ ] Explore `dig.rc` kinda file

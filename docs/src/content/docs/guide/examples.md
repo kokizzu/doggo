@@ -122,6 +122,32 @@ These examples showcase how to combine different features for powerful DNS query
     doggo AAAA example.com -6 --timeout 3s --do
     ```
 
+### Delegation Trace
+
+15. Follow the delegation chain iteratively:
+
+    ```bash
+    doggo example.com --trace
+    ```
+
+16. Bootstrap the trace through a specific resolver:
+
+    ```bash
+    doggo example.com AAAA --trace @1.1.1.1
+    ```
+
+17. Export the trace as JSON for scripting:
+
+    ```bash
+    doggo example.com --trace --json | jq '.trace | {status, verdict}'
+    ```
+
+18. Trace a reverse lookup over IPv4 only:
+
+    ```bash
+    doggo --reverse 8.8.8.8 --trace -4
+    ```
+
 ## Scripting and Automation
 
 16. Use JSON output for easy parsing in scripts:

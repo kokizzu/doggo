@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,16 @@ func main() {
 		return
 	}
 
+	if cfg.trace {
+		// Trace mode dispatches before Globalping and the normal lookup path;
+		// --trace with --gp-from is a validation error (exit 1), so the
+		// Globalping branch below never sees it.
+		if cfg.reverseLookup {
+			app.ReverseLookup()
+		}
+		os.Exit(runTrace(app, cfg, logger))
+	}
+
 	if app.QueryFlags.GPFrom != "" {
 		// A local source bind cannot affect a probe executed by Globalping.
 		if app.QueryFlags.SourceAddr != "" {
@@ -117,11 +128,123 @@ func main() {
 	outputResults(app, responses, lookupErrors)
 }
 
+// runTrace executes --trace mode and returns the process exit code. It
+// validates the invocation, traces the single effective question iteratively
+// from the root, renders whatever was collected (including partial hops), and
+// only then maps an operational failure onto an exit code: 0 for a completed
+// trace (including authoritative NXDOMAIN/NODATA), 1 for an invalid
+// invocation, 2 when at least one hop was collected before the error, and 9
+// when no usable hop was produced.
+func runTrace(a *app.App, cfg *config, logger *slog.Logger) int {
+	applyTraceDefaults(&a.QueryFlags)
+	if err := validateTraceQuery(a.QueryFlags); err != nil {
+		logger.Error("Invalid --trace invocation", "error", err)
+		return exitGenericFailure
+	}
+
+	if err := a.PrepareQuestions(); err != nil {
+		logger.Error("Error preparing DNS questions", "error", err)
+		return exitGenericFailure
+	}
+
+	opts := resolvers.TraceOptions{
+		Flags:      cfg.queryFlags,
+		UseIPv4:    a.QueryFlags.UseIPv4,
+		UseIPv6:    a.QueryFlags.UseIPv6,
+		SourceAddr: a.QueryFlags.SourceAddr,
+		Timeout:    cfg.timeout,
+	}
+
+	// An explicit nameserver (flag, positional @server, or config/env) only
+	// primes the root zone. Without one, the tracer starts from the compiled
+	// IANA root hints and system resolvers are never loaded.
+	if len(a.QueryFlags.Nameservers) > 0 {
+		if err := a.LoadNameservers(); err != nil {
+			logger.Error("Error loading nameservers", "error", err)
+			return exitGenericFailure
+		}
+		bootstrap, err := loadResolvers(a, cfg)
+		if err != nil {
+			logger.Error("Error loading resolvers", "error", err)
+			return exitGenericFailure
+		}
+		defer func() {
+			if err := resolvers.CloseResolvers(bootstrap); err != nil {
+				logger.Debug("Error closing bootstrap resolvers", "error", err)
+			}
+		}()
+		if len(bootstrap) > 0 {
+			opts.Bootstrap = bootstrap[0]
+		}
+	}
+
+	result, err := resolvers.Trace(context.Background(), a.Questions[0], opts)
+
+	// Render the trace -- partial results included -- before mapping an
+	// operational failure onto an exit code.
+	if outErr := a.OutputTrace(result); outErr != nil {
+		logger.Error("Error rendering trace output", "error", outErr)
+		return exitPartialFailure
+	}
+	if err != nil {
+		logger.Error("Trace failed", "error", err)
+		if len(result.Hops) > 0 {
+			return exitPartialFailure
+		}
+		return exitLookupFailure
+	}
+	return 0
+}
+
+// applyTraceDefaults narrows the free-form defaults for trace mode: a trace
+// asks exactly one question, so an unspecified type/class becomes A/IN rather
+// than the regular lookup's A+AAAA pair.
+func applyTraceDefaults(qf *models.QueryFlags) {
+	if len(qf.QTypes) == 0 {
+		qf.QTypes = []string{"A"}
+	}
+	if len(qf.QClasses) == 0 {
+		qf.QClasses = []string{"IN"}
+	}
+}
+
+// validateTraceQuery enforces the --trace invocation contract: the mode is
+// incompatible with fan-out features and accepts exactly one IN-class
+// question. Errors here are usage mistakes (exit 1), never DNS failures.
+func validateTraceQuery(qf models.QueryFlags) error {
+	if qf.QueryAny {
+		return errors.New("--trace cannot be combined with --any: a trace asks exactly one question")
+	}
+	if qf.UseAuthoritative {
+		return errors.New("--trace cannot be combined with --authoritative: tracing already discovers the authoritative nameservers")
+	}
+	if qf.GPFrom != "" {
+		return errors.New("--trace cannot be combined with --gp-from: tracing requires direct iterative queries and cannot run through Globalping")
+	}
+	if qf.UseIPv4 && qf.UseIPv6 {
+		return errors.New("--trace cannot be combined with both --ipv4 and --ipv6: pick one address family")
+	}
+	if len(qf.QNames) != 1 {
+		return fmt.Errorf("--trace requires exactly one query name, got %d", len(qf.QNames))
+	}
+	if len(qf.QTypes) != 1 {
+		return fmt.Errorf("--trace requires exactly one query type, got %d", len(qf.QTypes))
+	}
+	if len(qf.QClasses) != 1 {
+		return fmt.Errorf("--trace requires exactly one query class, got %d", len(qf.QClasses))
+	}
+	if !strings.EqualFold(qf.QClasses[0], "IN") {
+		return fmt.Errorf("--trace supports only class IN, got %q", qf.QClasses[0])
+	}
+	return nil
+}
+
 type config struct {
 	flagSet       *flag.FlagSet
 	showVersion   bool
 	debug         bool
 	reverseLookup bool
+	trace         bool
 	timeout       time.Duration
 	queryFlags    resolvers.QueryFlags
 	outputJSON    bool
@@ -140,6 +263,7 @@ func loadConfig() (*config, error) {
 	cfg.showVersion = k.Bool("version")
 	cfg.debug = k.Bool("debug")
 	cfg.reverseLookup = k.Bool("reverse")
+	cfg.trace = k.Bool("trace")
 	cfg.timeout = k.Duration("timeout")
 	cfg.outputJSON = k.Bool("json")
 	cfg.showTime = k.Bool("time")
@@ -233,6 +357,7 @@ func setupFlags() *flag.FlagSet {
 
 	f.Bool("any", false, "Query all supported DNS record types")
 	f.BoolP("authoritative", "A", false, "Automatically query the authoritative nameserver for the domain")
+	f.Bool("trace", false, "Trace the delegation path from the root servers to the authoritative answer")
 
 	f.BoolP("json", "J", false, "Set the output format as JSON")
 	f.Bool("short", false, "Short output format")

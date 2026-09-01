@@ -87,6 +87,9 @@ doggo example.com --json | jq '.responses[0].answers[].address'
 # Reverse DNS lookup
 doggo --reverse 8.8.8.8 --short
 
+# Follow the delegation chain iteratively
+doggo example.com --trace
+
 # Using Globalping
 doggo example.com --gp-from Germany,Japan --gp-limit 2
 ```
@@ -122,6 +125,7 @@ Precedence (lowest to highest): flag defaults < config file < environment variab
 
 - Human-readable output with color-coded and tabular format
 - JSON output support for easy scripting and parsing
+- Iterative delegation tracing with `--trace`
 - Multiple transport protocols: DoH, DoT, DoQ, TCP, UDP, DNSCrypt
 - Explicit DNS-over-HTTPS over HTTP/3 with `--http3`
 - EDNS support with Client Subnet (ECS), NSID, Cookies, Padding, and Extended Errors

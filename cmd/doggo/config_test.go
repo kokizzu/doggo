@@ -16,6 +16,7 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"github.com/mr-karan/doggo/internal/app"
+	"github.com/mr-karan/doggo/pkg/models"
 	flag "github.com/spf13/pflag"
 )
 
@@ -664,6 +665,123 @@ func TestCLIOnlyKeyInConfigFails(t *testing.T) {
 	f := setupFlags()
 	if err := parseAndLoadFlags(k, f, nil); err == nil {
 		t.Fatal("expected error for cli-only key in config file, got nil")
+	}
+}
+
+// --- trace mode: config/env wiring and invocation validation ---
+
+func TestTraceModeFromFlagConfigAndEnv(t *testing.T) {
+	t.Run("default off", func(t *testing.T) {
+		isolateConfigEnv(t)
+		k := loadTestConfig(t, "example.com")
+		if k.Bool("trace") {
+			t.Error("trace should default to false")
+		}
+	})
+
+	t.Run("flag", func(t *testing.T) {
+		isolateConfigEnv(t)
+		k := loadTestConfig(t, "--trace", "example.com")
+		if !k.Bool("trace") {
+			t.Error("--trace should set trace mode")
+		}
+	})
+
+	t.Run("config file", func(t *testing.T) {
+		xdg, _ := isolateConfigEnv(t)
+		writeXDGConfig(t, xdg, "trace = true\n")
+		k := loadTestConfig(t, "example.com")
+		if !k.Bool("trace") {
+			t.Error("trace = true in config file should set trace mode")
+		}
+	})
+
+	t.Run("environment", func(t *testing.T) {
+		isolateConfigEnv(t)
+		t.Setenv("DOGGO_TRACE", "true")
+		k := loadTestConfig(t, "example.com")
+		if !k.Bool("trace") {
+			t.Error("DOGGO_TRACE=true should set trace mode")
+		}
+	})
+
+	t.Run("flag overrides config file", func(t *testing.T) {
+		xdg, _ := isolateConfigEnv(t)
+		writeXDGConfig(t, xdg, "trace = true\n")
+		k := loadTestConfig(t, "--trace=false", "example.com")
+		if k.Bool("trace") {
+			t.Error("--trace=false should override trace = true in config file")
+		}
+	})
+}
+
+func TestApplyTraceDefaults(t *testing.T) {
+	qf := models.QueryFlags{QNames: []string{"example.com"}}
+	applyTraceDefaults(&qf)
+	if got := qf.QTypes; len(got) != 1 || got[0] != "A" {
+		t.Fatalf("QTypes = %v, want [A] (trace defaults to a single A question)", got)
+	}
+	if got := qf.QClasses; len(got) != 1 || got[0] != "IN" {
+		t.Fatalf("QClasses = %v, want [IN]", got)
+	}
+
+	// Explicit values must survive the defaults untouched.
+	qf = models.QueryFlags{QNames: []string{"example.com"}, QTypes: []string{"AAAA"}, QClasses: []string{"IN"}}
+	applyTraceDefaults(&qf)
+	if got := qf.QTypes; len(got) != 1 || got[0] != "AAAA" {
+		t.Fatalf("QTypes = %v, want [AAAA] unchanged", got)
+	}
+}
+
+func TestValidateTraceQuery(t *testing.T) {
+	valid := func() models.QueryFlags {
+		qf := models.QueryFlags{QNames: []string{"example.com"}}
+		applyTraceDefaults(&qf)
+		return qf
+	}
+
+	t.Run("single A IN question is valid", func(t *testing.T) {
+		if err := validateTraceQuery(valid()); err != nil {
+			t.Fatalf("validateTraceQuery = %v, want nil", err)
+		}
+	})
+
+	t.Run("reverse PTR question is valid", func(t *testing.T) {
+		qf := valid()
+		qf.QNames = []string{"1.2.0.192.in-addr.arpa."}
+		qf.QTypes = []string{"PTR"}
+		if err := validateTraceQuery(qf); err != nil {
+			t.Fatalf("validateTraceQuery = %v, want nil", err)
+		}
+	})
+
+	reject := []struct {
+		name   string
+		mutate func(*models.QueryFlags)
+		want   string
+	}{
+		{"any", func(qf *models.QueryFlags) { qf.QueryAny = true }, "--any"},
+		{"authoritative", func(qf *models.QueryFlags) { qf.UseAuthoritative = true }, "--authoritative"},
+		{"globalping", func(qf *models.QueryFlags) { qf.GPFrom = "Germany" }, "--gp-from"},
+		{"both address families", func(qf *models.QueryFlags) { qf.UseIPv4 = true; qf.UseIPv6 = true }, "--ipv4"},
+		{"multiple names", func(qf *models.QueryFlags) { qf.QNames = append(qf.QNames, "other.example") }, "exactly one query name"},
+		{"no names", func(qf *models.QueryFlags) { qf.QNames = nil }, "exactly one query name"},
+		{"multiple types", func(qf *models.QueryFlags) { qf.QTypes = append(qf.QTypes, "AAAA") }, "exactly one query type"},
+		{"multiple classes", func(qf *models.QueryFlags) { qf.QClasses = append(qf.QClasses, "CH") }, "exactly one query class"},
+		{"non-IN class", func(qf *models.QueryFlags) { qf.QClasses = []string{"CH"} }, "class IN"},
+	}
+	for _, tc := range reject {
+		t.Run(tc.name, func(t *testing.T) {
+			qf := valid()
+			tc.mutate(&qf)
+			err := validateTraceQuery(qf)
+			if err == nil {
+				t.Fatalf("validateTraceQuery = nil, want error containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateTraceQuery = %q, want it to mention %q", err, tc.want)
+			}
+		})
 	}
 }
 
