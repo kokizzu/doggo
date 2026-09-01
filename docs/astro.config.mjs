@@ -1,4 +1,3 @@
-import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import { defineConfig, passthroughImageService } from "astro/config";
 
@@ -46,6 +45,7 @@ export default defineConfig({
             { label: "Multiple Resolvers", link: "/features/multiple" },
             { label: "IPv4 and IPv6", link: "/features/ip" },
             { label: "Reverse IP Lookups", link: "/features/reverse" },
+            { label: "Delegation Trace", link: "/features/trace" },
             { label: "Protocol Tweaks", link: "/features/tweaks" },
             { label: "Shell Completions", link: "/features/shell" },
             { label: "Common Record Types", link: "/features/any" },

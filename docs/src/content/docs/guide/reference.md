@@ -17,6 +17,10 @@ Invalid, reserved, and non-question record types are rejected before a DNS
 request is sent; the lookup API reports the same validation failures as HTTP
 400 responses.
 
+`--trace` switches Doggo into iterative delegation-trace mode. In trace mode,
+Doggo accepts exactly one effective question, defaults to `A IN`, and rejects
+the explicit `ANY` query type.
+
 ## Query Options
 
 | Option                  | Description                                                                  |
@@ -26,6 +30,7 @@ request is sent; the lookup API reports the same validation failures as HTTP
 | `-n, --nameserver=ADDR` | Address of a specific nameserver to send queries to (e.g., 9.9.9.9, 8.8.8.8) |
 | `-c, --class=CLASS`     | Network class of the DNS record (IN, CH, HS, etc.)                           |
 | `-x, --reverse`         | Performs a reverse DNS lookup for an IPv4 or IPv6 address                    |
+| `--trace`               | Follow the DNS delegation chain iteratively instead of using a recursive lookup |
 
 ## Resolver Options
 
@@ -37,9 +42,16 @@ request is sent; the lookup API reports the same validation failures as HTTP
 | `--timeout=DURATION`           | Specify timeout for the resolver to return a response (e.g., 5s, 400ms, 1m) |
 | `-4, --ipv4`                   | Use IPv4 only                                                               |
 | `-6, --ipv6`                   | Use IPv6 only                                                               |
+| `-b, --source=IP`              | Bind queries to a local source IP address                                   |
 | `--http3`                      | Use HTTP/3 for HTTPS (DoH) nameservers                                      |
 | `--tls-hostname=HOSTNAME`      | Provide a hostname for TLS certificate verification                         |
 | `--skip-hostname-verification` | Skip TLS Hostname Verification for DoT lookups                              |
+
+`--source` accepts an IPv4 or IPv6 literal, including a scoped IPv6 address.
+Bracketed IPv6 is accepted. Omit the port or use port `0`; fixed non-zero
+source ports are unsupported because queries can run concurrently. The address
+family must match `--ipv4` or `--ipv6` when either filter is selected.
+DNSCrypt does not support source binding.
 
 ## Query Flags
 
@@ -94,6 +106,67 @@ EDNS (Extension Mechanisms for DNS) provides additional capabilities beyond basi
 | `--debug`    | Enable debug logging                                  |
 | `--time`     | Show query response time                              |
 
+## Trace Mode
+
+Use `--trace` to walk the delegation chain directly.
+
+```bash
+doggo example.com --trace
+doggo example.com AAAA --trace
+doggo --reverse 8.8.8.8 --trace
+doggo example.com --trace @1.1.1.1
+doggo example.com --trace --json
+doggo example.com --trace --short
+```
+
+### Trace semantics
+
+- `--trace` is a mode flag, not a subcommand.
+- Trace mode accepts exactly one effective question and defaults to `A IN`.
+- The explicit `ANY` query type is unsupported.
+- `--reverse` converts the query to PTR form before tracing.
+- `@server` or `--nameserver` affects only root priming.
+- Without an explicit resolver, Doggo starts from built-in IANA root hints.
+- With an explicit bootstrap resolver, Doggo asks for `NS .`, keeps matching root servers, and fills missing root addresses from the built-in hints.
+- If priming fails, the trace ends with a bootstrap error.
+- Later hops are sent directly to authoritative servers over classic DNS with `RD=0`.
+- Authoritative hops try UDP first and retry truncated responses over TCP.
+- `--ipv4`, `--ipv6`, `--timeout`, DNS header flags, EDNS flags, output flags, and `--debug` still apply.
+- `-b`/`--source` binds direct authoritative queries to a local IP address and must match the selected address-family filter.
+- Encrypted resolver settings only apply to an explicit bootstrap resolver.
+- `--do` may expose DNSSEC records in the trace, but Doggo does **not** validate the chain of trust.
+
+### Trace JSON
+
+Trace JSON uses schema version `1` with these stable enums:
+
+- `status`: `complete`, `partial`, `failed`
+- `verdict`: `answer`, `nxdomain`, `nodata`, `error`
+- `outcome`: `referral`, `answer`, `cname`, `nxdomain`, `nodata`, `error`
+
+The top level contains `schema_version` and `trace`. The nested `trace` object contains `query`, `status`, `verdict`, `hops`, `summary`, and an optional structured `error`. Each hop carries its ordered `attempts`; each attempt includes the nameserver, IP, protocol, RTT, RCODE, an optional truncation marker, and an optional structured error.
+
+### Trace incompatibilities and exits
+
+`--trace` rejects:
+
+- `--any` and the explicit `ANY` query type
+- `--authoritative`
+- `--gp-from`
+- zero or multiple effective questions
+- non-`IN` classes
+- using both `--ipv4` and `--ipv6`
+- a `--source` address whose family conflicts with `--ipv4` or `--ipv6`
+
+Exit codes:
+
+- `0`: completed trace, including authoritative `NXDOMAIN` and `NODATA`
+- `1`: invalid invocation or configuration, including malformed or family-mismatched `--source` values
+- `2`: partial trace; Doggo still prints collected hops first
+- `9`: no usable trace hop was produced
+
+For a walkthrough of the human-readable trace output, see [Delegation Trace](/features/trace).
+
 ## Transport Options
 
 Specify the protocol with a URL-type scheme. UDP is used if no scheme is specified.
@@ -142,7 +215,7 @@ The config file is resolved in the following order (first match wins):
 
 A missing file at a default location is silently ignored. A file requested explicitly via `--config` or `DOGGO_CONFIG` that is missing or malformed is an error.
 
-Keys are the long flag names. Example `config.toml`:
+Keys are the long flag names, so `trace = true` is equivalent to `DOGGO_TRACE=true` or passing `--trace`. Example `config.toml`:
 
 ```toml
 # Always pick the first nameserver instead of querying all.
@@ -172,6 +245,7 @@ Environment variables are the `DOGGO_` prefix plus the upper-cased flag name wit
 export DOGGO_STRATEGY=first
 export DOGGO_COLOR=false
 export DOGGO_TIMEOUT=10s
+export DOGGO_TRACE=true
 
 # HTTP/3 requires an HTTPS (DoH) nameserver.
 export DOGGO_NAMESERVER=https://cloudflare-dns.com/dns-query

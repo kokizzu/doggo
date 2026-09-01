@@ -13,7 +13,7 @@ _doggo() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="--version -h --help -q --query -t --type -n --nameserver -c --class -x --reverse --any -A --authoritative --strategy --ndots --search -T --timeout -4 --ipv4 -6 --ipv6 --http3 --tls-hostname --skip-hostname-verification -b --source --aa --ad --cd --rd --z --do --nsid --cookie --padding --ede --ecs --bufsize -J --json --short --color --debug --time --gp-from --gp-limit --config"
+    opts="--version -h --help -q --query -t --type -n --nameserver -c --class -x --reverse --any -A --authoritative --trace --strategy --ndots --search -T --timeout -4 --ipv4 -6 --ipv6 --http3 --tls-hostname --skip-hostname-verification -b --source --aa --ad --cd --rd --z --do --nsid --cookie --padding --ede --ecs --bufsize -J --json --short --color --debug --time --gp-from --gp-limit --config"
 
     case "${prev}" in
         --config)
@@ -72,6 +72,7 @@ _doggo() {
     '(-x --reverse)'{-x,--reverse}'[Performs a DNS Lookup for an IPv4 or IPv6 address]' \
     '--any[Query all supported DNS record types]' \
     '(-A --authoritative)'{-A,--authoritative}'[Automatically query the authoritative nameserver for the domain]' \
+    '--trace[Trace the delegation path from the root servers]' \
     '--strategy[Strategy to query nameservers]:strategy:(all random first internal)' \
     '--ndots[Number of required dots in hostname to assume FQDN]:number of dots' \
     '--search[Use the search list defined in resolv.conf]' \
@@ -146,6 +147,7 @@ complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -s 'c' -l 'class'   
 complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -s 'x' -l 'reverse'    -d "Performs a DNS Lookup for an IPv4 or IPv6 address"
 complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -l 'any'               -d "Query all supported DNS record types"
 complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -s 'A' -l 'authoritative' -d "Automatically query the authoritative nameserver for the domain"
+complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -l 'trace'           -d "Trace the delegation path from the root servers"
 
 # Resolver options
 complete -c doggo -n 'not __fish_doggo_arg1_is_completions' -l 'strategy'  -d "Strategy to query nameservers" -x -a "all random first internal"

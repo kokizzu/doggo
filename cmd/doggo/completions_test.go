@@ -49,6 +49,37 @@ func TestFlagsAreIncludedInEveryCompletion(t *testing.T) {
 	}
 }
 
+// TestTraceFlagInEveryCompletion covers the --trace mode flag added with
+// the delegation-trace feature, in each shell's native syntax.
+func TestTraceFlagInEveryCompletion(t *testing.T) {
+	tests := map[string]struct {
+		completion string
+		expect     []string
+	}{
+		"bash": {
+			completion: bashCompletion,
+			expect:     []string{"-A --authoritative --trace"},
+		},
+		"zsh": {
+			completion: zshCompletion,
+			expect:     []string{"'--trace[Trace the delegation path from the root servers]'"},
+		},
+		"fish": {
+			completion: fishCompletion,
+			expect:     []string{"-l 'trace'"},
+		},
+	}
+	for shell, tc := range tests {
+		for _, want := range tc.expect {
+			t.Run(shell+"/"+want, func(t *testing.T) {
+				if !strings.Contains(tc.completion, want) {
+					t.Fatalf("%s completion is missing %q", shell, want)
+				}
+			})
+		}
+	}
+}
+
 // TestBooleanFlagsDoNotTakeValues asserts pflag booleans are not completed
 // with a separate value argument (--search false is invalid; --search=false
 // is the explicit form).

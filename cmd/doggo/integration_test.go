@@ -971,3 +971,89 @@ func TestInvalidSourceAddressFailsClearly(t *testing.T) {
 		t.Fatalf("stderr should explain the invalid source address\nstderr:\n%s", stderr)
 	}
 }
+
+// --- --trace mode ---
+
+// TestTraceRejectsIncompatibleInvocations exercises the --trace validation
+// contract end to end. Every case must exit 1 before any network traffic, so
+// these run without internet access.
+func TestTraceRejectsIncompatibleInvocations(t *testing.T) {
+	tests := []struct {
+		name     string
+		extraEnv []string
+		args     []string
+		want     string
+	}{
+		{name: "any", args: []string{"--trace", "--any", "example.test"}, want: "--any"},
+		{name: "explicit ANY type", args: []string{"--trace", "ANY", "example.test"}, want: "query type ANY"},
+		{name: "authoritative", args: []string{"--trace", "--authoritative", "example.test"}, want: "--authoritative"},
+		{name: "globalping", args: []string{"--trace", "--gp-from", "Germany", "example.test"}, want: "--gp-from"},
+		{name: "both address families", args: []string{"--trace", "-4", "-6", "example.test"}, want: "--ipv4"},
+		{name: "non-IN class flag", args: []string{"--trace", "-c", "CH", "example.test"}, want: "class IN"},
+		{name: "non-IN class positional", args: []string{"--trace", "CH", "example.test"}, want: "class IN"},
+		{name: "multiple types", args: []string{"--trace", "A", "AAAA", "example.test"}, want: "exactly one query type"},
+		{name: "multiple names", args: []string{"--trace", "a.example.test", "b.example.test"}, want: "exactly one query name"},
+		{name: "multiple classes", args: []string{"--trace", "-c", "IN", "-c", "CH", "example.test"}, want: "exactly one query class"},
+		{name: "missing question", args: []string{"--trace"}, want: "exactly one query name"},
+		{name: "invalid source", args: []string{"--trace", "--source", "not-an-ip", "example.test"}, want: "invalid source address"},
+		{name: "source family mismatch", args: []string{"--trace", "-4", "--source", "::1", "example.test"}, want: "does not match IPv4"},
+		// DOGGO_TRACE=true enables trace mode, so the --any conflict must
+		// surface even without a --trace flag on the command line.
+		{name: "trace from env", extraEnv: []string{"DOGGO_TRACE=true"}, args: []string{"--any", "example.test"}, want: "--any"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, exit := runDoggoEnv(t, test.extraEnv, test.args...)
+			if exit != 1 {
+				t.Fatalf("exit = %d, want 1 (invalid --trace invocation)\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+			}
+			if output := stdout + stderr; !strings.Contains(output, test.want) {
+				t.Fatalf("output does not mention %q\n%s", test.want, output)
+			}
+		})
+	}
+
+	// trace = true in the config file enables trace mode; the non-IN class
+	// conflict proves the mode was active without any network dependency.
+	t.Run("trace from config file", func(t *testing.T) {
+		xdg := t.TempDir()
+		writeConfigFile(t, filepath.Join(xdg, "doggo"), "trace = true\nclass = \"CH\"\n")
+		stdout, stderr, exit := runDoggoEnv(t,
+			[]string{"XDG_CONFIG_HOME=" + xdg},
+			"example.test",
+		)
+		if exit != 1 {
+			t.Fatalf("exit = %d, want 1\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+		}
+		if output := stdout + stderr; !strings.Contains(output, "class IN") {
+			t.Fatalf("output does not mention the class IN restriction\n%s", output)
+		}
+	})
+}
+
+// TestTraceDocumentedInHelpAndCompletions keeps the --trace flag visible in
+// user-facing surfaces.
+func TestTraceDocumentedInHelpAndCompletions(t *testing.T) {
+	stdout, _, exit := runDoggo(t, "--help")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0 for --help", exit)
+	}
+	if !strings.Contains(stdout, "--trace") {
+		t.Fatalf("help output does not document --trace\nstdout:\n%s", stdout)
+	}
+
+	for shell, want := range map[string]string{
+		"bash": "--trace",
+		"zsh":  "--trace",
+		"fish": "-l 'trace'", // fish long options omit the leading dashes
+	} {
+		stdout, _, exit := runDoggo(t, "completions", shell)
+		if exit != 0 {
+			t.Fatalf("exit = %d, want 0 for completions %s", exit, shell)
+		}
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("%s completion does not offer %q", shell, want)
+		}
+	}
+}

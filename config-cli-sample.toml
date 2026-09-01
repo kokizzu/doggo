@@ -48,6 +48,10 @@
 # Query every common record type (A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, CAA).
 # any = false
 
+# Perform an iterative delegation trace instead of a recursive lookup.
+# Trace mode accepts exactly one effective question and defaults to A IN.
+# trace = false
+
 # Look up the domain's authoritative nameservers and query those.
 # authoritative = false
 
